@@ -31,6 +31,7 @@ static EGLBoolean (*orig_eglswapbuffers)(EGLDisplay, EGLSurface) = nullptr;
 // ── software keyboard ─────────────────────────────────────────────────────────
 
 static JavaVM*        g_jvm      = nullptr;
+static jobject        g_activity = nullptr;  // FIX: declare g_activity
 static bool           g_keyboard_visible = false;
 static std::atomic<int> g_keyboard_request{0}; // 0=none 1=show 2=hide
 
@@ -507,6 +508,8 @@ bool OnTouchCallback(int action, int pointerId, float x, float y) {
     ImGuiIO& io = ImGui::GetIO();
     io.AddMousePosEvent(x, y);
     if (action == AMOTION_EVENT_ACTION_DOWN)
+        io.AddMouseButtonEvent(0, true);
+    else if (action == AMOTION_EVENT_ACTION_UP)
         io.AddMouseButtonEvent(0, true);
     else if (action == AMOTION_EVENT_ACTION_UP)
         io.AddMouseButtonEvent(0, false);
