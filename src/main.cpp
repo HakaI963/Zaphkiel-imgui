@@ -31,7 +31,7 @@ static EGLBoolean (*orig_eglswapbuffers)(EGLDisplay, EGLSurface) = nullptr;
 // ── software keyboard ─────────────────────────────────────────────────────────
 
 static JavaVM*        g_jvm      = nullptr;
-static jobject        g_activity = nullptr;  // FIX: declare g_activity
+static jobject        g_activity = nullptr;
 static bool           g_keyboard_visible = false;
 static std::atomic<int> g_keyboard_request{0}; // 0=none 1=show 2=hide
 
@@ -152,8 +152,11 @@ static void* keyboard_thread(void*) {
     return nullptr;
 }
 
+// FIX: Two separate bound rects — one for the trigger button, one for the main menu.
+//      Both are checked in OnTouchCallback so neither blocks game touches when invisible.
 struct WindowBounds { float x, y, w, h; bool visible; };
-static WindowBounds g_menuBounds = {0, 0, 0, 0, false};
+static WindowBounds g_menuBounds    = {0, 0, 0, 0, false};  // main Zaphkiel window
+static WindowBounds g_triggerBounds = {0, 0, 0, 0, false};  // OPEN MENU button
 static std::mutex   g_boundsMutex;
 
 struct SearchResult { std::string file; int line; std::string text; };
@@ -212,6 +215,7 @@ void drawmenu() {
 
     ImGuiIO& io = ImGui::GetIO();
 
+    // ── Trigger button ────────────────────────────────────────────────────────
     ImGui::SetNextWindowPos(
         ImVec2(0.0f, io.DisplaySize.y * 0.5f),
         ImGuiCond_Always, ImVec2(0.0f, 0.5f));
@@ -226,13 +230,28 @@ void drawmenu() {
         show_menu = !show_menu;
     ImGui::PopStyleColor(2);
     ImGui::SetWindowFontScale(1.0f);
+
+    // FIX: capture trigger window bounds BEFORE End() so hit-test works on the button
+    {
+        std::lock_guard<std::mutex> lk(g_boundsMutex);
+        ImVec2 tp = ImGui::GetWindowPos();
+        ImVec2 ts = ImGui::GetWindowSize();
+        g_triggerBounds = {tp.x, tp.y, ts.x, ts.y, true};
+    }
+
     ImGui::End();
 
     if (!show_menu) {
         if (g_keyboard_visible) keyboard_hide();
+        // FIX: clear main menu bounds when menu is closed so it doesn't block touches
+        {
+            std::lock_guard<std::mutex> lk(g_boundsMutex);
+            g_menuBounds.visible = false;
+        }
         return;
     }
 
+    // ── Main menu window ──────────────────────────────────────────────────────
     ImGui::SetNextWindowSize(ImVec2(1000, 650), ImGuiCond_Appearing);
     ImGui::SetNextWindowPos(
         ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
@@ -412,12 +431,10 @@ void drawmenu() {
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
 
+    // FIX: update main menu bounds every frame while menu is open
     {
         std::lock_guard<std::mutex> lock(g_boundsMutex);
-        if (show_menu)
-            g_menuBounds = {win_pos.x, win_pos.y, win_size.x, win_size.y, true};
-        else
-            g_menuBounds.visible = false;
+        g_menuBounds = {win_pos.x, win_pos.y, win_size.x, win_size.y, true};
     }
 }
 
@@ -505,26 +522,42 @@ typedef PreloaderInput_Interface* (*GetPreloaderInput_Fn)();
 bool OnTouchCallback(int action, int pointerId, float x, float y) {
     if (!g_initialized) return false;
 
-    ImGuiIO& io = ImGui::GetIO();
-    io.AddMousePosEvent(x, y);
-    if (action == AMOTION_EVENT_ACTION_DOWN)
-        io.AddMouseButtonEvent(0, true);
-    else if (action == AMOTION_EVENT_ACTION_UP)
-        io.AddMouseButtonEvent(0, true);
-    else if (action == AMOTION_EVENT_ACTION_UP)
-        io.AddMouseButtonEvent(0, false);
-
-    Zaphkiel::NotifyTouch(action, x, y);
-
+    // FIX: check hit-test BEFORE feeding event to ImGui.
+    //      Only consume the touch if it lands inside a visible ImGui window.
+    //      NEVER use io.WantCaptureMouse — on Android with a hooked input system
+    //      (not a real View) ImGui always reports WantCaptureMouse=true whenever
+    //      any window exists, which permanently blocks all game touches.
     bool hitTest = false;
     {
         std::lock_guard<std::mutex> lock(g_boundsMutex);
+
+        // check main menu window
         if (g_menuBounds.visible &&
             x >= g_menuBounds.x && x <= g_menuBounds.x + g_menuBounds.w &&
             y >= g_menuBounds.y && y <= g_menuBounds.y + g_menuBounds.h)
             hitTest = true;
+
+        // check trigger button window (always visible)
+        if (!hitTest && g_triggerBounds.visible &&
+            x >= g_triggerBounds.x && x <= g_triggerBounds.x + g_triggerBounds.w &&
+            y >= g_triggerBounds.y && y <= g_triggerBounds.y + g_triggerBounds.h)
+            hitTest = true;
     }
-    return hitTest || io.WantCaptureMouse;
+
+    // Only forward touch to ImGui if it's actually inside our UI
+    if (hitTest) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(x, y);
+        if (action == AMOTION_EVENT_ACTION_DOWN)
+            io.AddMouseButtonEvent(0, true);
+        else if (action == AMOTION_EVENT_ACTION_UP)
+            io.AddMouseButtonEvent(0, false);
+    }
+
+    Zaphkiel::NotifyTouch(action, x, y);
+
+    // FIX: return only hitTest — no io.WantCaptureMouse fallback
+    return hitTest;
 }
 
 static void* mainthread(void*) {
