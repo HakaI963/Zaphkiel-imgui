@@ -73,7 +73,9 @@ static void keyboard_do_show() {
     jobject   imm = env->CallObjectMethod(activity, gss, ims);
     jclass    ic  = env->GetObjectClass(imm);
     jmethodID ssi = env->GetMethodID(ic, "showSoftInput", "(Landroid/view/View;I)Z");
-    env->CallBooleanMethod(imm, ssi, dv, 0);
+    // Flag 2 = SHOW_FORCED — required when the window has no real focused View
+    // (injected overlay .so). Flag 0 is silently ignored by Android in this case.
+    env->CallBooleanMethod(imm, ssi, dv, 2);
 
     env->DeleteLocalRef(at_class); env->DeleteLocalRef(at);
     env->DeleteLocalRef(activity); env->DeleteLocalRef(ac);
@@ -324,18 +326,22 @@ void drawmenu() {
         ImGui::Separator();
         ImGui::Spacing();
 
-        ImGui::SetNextItemWidth(500.0f);
+        ImGui::SetNextItemWidth(460.0f);
         bool enter = ImGui::InputText("##q", g_search_buf, sizeof(g_search_buf),
             ImGuiInputTextFlags_EnterReturnsTrue);
 
-        // IsItemActivated/Deactivated are evaluated AFTER InputText — correct way
-        // to detect focus gain/loss on the item that was just drawn.
-        if (ImGui::IsItemActivated())   keyboard_show();
-        if (ImGui::IsItemDeactivated()) keyboard_hide();
+        // IsItemActivated is unreliable in a hooked .so overlay (no real Android View
+        // focus), so we use an explicit toggle button that directly calls show/hide.
+        ImGui::SameLine(0, 4);
+        bool kb_btn = ImGui::Button(g_keyboard_visible ? "v##kb" : "K##kb", ImVec2(36, 0));
+        if (kb_btn) {
+            if (g_keyboard_visible) keyboard_hide();
+            else                    keyboard_show();
+        }
 
-        ImGui::SameLine();
+        ImGui::SameLine(0, 4);
         bool btn = ImGui::Button("Search", ImVec2(120, 0));
-        if (btn) { ImGui::SetKeyboardFocusHere(-1); keyboard_hide(); }
+        if (btn) { keyboard_hide(); }
 
         if ((enter || btn) && strlen(g_search_buf) >= 2) {
             std::string q = g_search_buf;
