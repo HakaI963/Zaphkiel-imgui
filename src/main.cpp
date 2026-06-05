@@ -36,7 +36,8 @@ static bool           g_keyboard_visible = false;
 static std::atomic<int> g_keyboard_request{0}; // 0=none 1=show 2=hide
 
 static void keyboard_do_show() {
-    if (!g_jvm || !g_activity) return;
+    // NOTE: g_activity is NEVER set (see JNI_OnLoad comment) — do NOT guard on it.
+    if (!g_jvm) return;
     JNIEnv* env = nullptr;
     bool attached = false;
     if (g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6) == JNI_EDETACHED) {
@@ -45,13 +46,12 @@ static void keyboard_do_show() {
     }
     if (!env) return;
 
-    // g_activity is Application — get the current Activity via ActivityThread
-    jclass    at_class  = env->FindClass("android/app/ActivityThread");
+    jclass    at_class = env->FindClass("android/app/ActivityThread");
     if (!at_class) { if (attached) g_jvm->DetachCurrentThread(); return; }
-    jmethodID cur_at    = env->GetStaticMethodID(at_class, "currentActivityThread", "()Landroid/app/ActivityThread;");
-    jobject   at        = env->CallStaticObjectMethod(at_class, cur_at);
-    jmethodID cur_act   = env->GetMethodID(at_class, "currentActivity", "()Landroid/app/Activity;");
-    jobject   activity  = env->CallObjectMethod(at, cur_act);
+    jmethodID cur_at   = env->GetStaticMethodID(at_class, "currentActivityThread", "()Landroid/app/ActivityThread;");
+    jobject   at       = env->CallStaticObjectMethod(at_class, cur_at);
+    jmethodID cur_act  = env->GetMethodID(at_class, "currentActivity", "()Landroid/app/Activity;");
+    jobject   activity = env->CallObjectMethod(at, cur_act);
 
     if (!activity) {
         env->DeleteLocalRef(at_class); env->DeleteLocalRef(at);
@@ -66,29 +66,36 @@ static void keyboard_do_show() {
     jmethodID gdv = env->GetMethodID(wc, "getDecorView", "()Landroid/view/View;");
     jobject   dv  = env->CallObjectMethod(win, gdv);
 
+    // requestFocus on the decor view so the window appears focused to Android
+    jclass    vc  = env->GetObjectClass(dv);
+    jmethodID rf  = env->GetMethodID(vc, "requestFocus", "()Z");
+    env->CallBooleanMethod(dv, rf);
+
     jclass    cc  = env->FindClass("android/content/Context");
     jfieldID  imf = env->GetStaticFieldID(cc, "INPUT_METHOD_SERVICE", "Ljava/lang/String;");
     jstring   ims = (jstring)env->GetStaticObjectField(cc, imf);
     jmethodID gss = env->GetMethodID(ac, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;");
     jobject   imm = env->CallObjectMethod(activity, gss, ims);
     jclass    ic  = env->GetObjectClass(imm);
-    jmethodID ssi = env->GetMethodID(ic, "showSoftInput", "(Landroid/view/View;I)Z");
-    // Flag 2 = SHOW_FORCED — required when the window has no real focused View
-    // (injected overlay .so). Flag 0 is silently ignored by Android in this case.
-    env->CallBooleanMethod(imm, ssi, dv, 2);
+
+    // toggleSoftInput(SHOW_FORCED=2, 0) works from overlay .so with no real focused View.
+    // showSoftInput silently fails without focus; toggleSoftInput does not need it.
+    jmethodID tsi = env->GetMethodID(ic, "toggleSoftInput", "(II)V");
+    env->CallVoidMethod(imm, tsi, 2, 0);
 
     env->DeleteLocalRef(at_class); env->DeleteLocalRef(at);
     env->DeleteLocalRef(activity); env->DeleteLocalRef(ac);
     env->DeleteLocalRef(win);      env->DeleteLocalRef(wc);
-    env->DeleteLocalRef(dv);       env->DeleteLocalRef(cc);
-    env->DeleteLocalRef(ims);      env->DeleteLocalRef(imm);
-    env->DeleteLocalRef(ic);
+    env->DeleteLocalRef(dv);       env->DeleteLocalRef(vc);
+    env->DeleteLocalRef(cc);       env->DeleteLocalRef(ims);
+    env->DeleteLocalRef(imm);      env->DeleteLocalRef(ic);
     if (attached) g_jvm->DetachCurrentThread();
     g_keyboard_visible = true;
 }
 
 static void keyboard_do_hide() {
-    if (!g_jvm || !g_activity) return;
+    // NOTE: g_activity is NEVER set — do NOT guard on it.
+    if (!g_jvm) return;
     JNIEnv* env = nullptr;
     bool attached = false;
     if (g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6) == JNI_EDETACHED) {
