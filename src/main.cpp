@@ -325,18 +325,17 @@ void drawmenu() {
         ImGui::Spacing();
 
         ImGui::SetNextItemWidth(500.0f);
-        bool was_active = ImGui::IsItemActive();
         bool enter = ImGui::InputText("##q", g_search_buf, sizeof(g_search_buf),
             ImGuiInputTextFlags_EnterReturnsTrue);
-        bool is_active = ImGui::IsItemActive();
 
-        // show keyboard when InputText gets focus, hide when it loses focus
-        if (!was_active && is_active)  keyboard_show();
-        if (was_active  && !is_active) keyboard_hide();
+        // IsItemActivated/Deactivated are evaluated AFTER InputText — correct way
+        // to detect focus gain/loss on the item that was just drawn.
+        if (ImGui::IsItemActivated())   keyboard_show();
+        if (ImGui::IsItemDeactivated()) keyboard_hide();
 
         ImGui::SameLine();
         bool btn = ImGui::Button("Search", ImVec2(120, 0));
-        if (btn) keyboard_hide();
+        if (btn) { ImGui::SetKeyboardFocusHere(-1); keyboard_hide(); }
 
         if ((enter || btn) && strlen(g_search_buf) >= 2) {
             std::string q = g_search_buf;
