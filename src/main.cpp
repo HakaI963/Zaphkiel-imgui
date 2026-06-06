@@ -66,11 +66,6 @@ static void keyboard_do_show() {
     jmethodID gdv = env->GetMethodID(wc, "getDecorView", "()Landroid/view/View;");
     jobject   dv  = env->CallObjectMethod(win, gdv);
 
-    // requestFocus on the decor view so the window appears focused to Android
-    jclass    vc  = env->GetObjectClass(dv);
-    jmethodID rf  = env->GetMethodID(vc, "requestFocus", "()Z");
-    env->CallBooleanMethod(dv, rf);
-
     jclass    cc  = env->FindClass("android/content/Context");
     jfieldID  imf = env->GetStaticFieldID(cc, "INPUT_METHOD_SERVICE", "Ljava/lang/String;");
     jstring   ims = (jstring)env->GetStaticObjectField(cc, imf);
@@ -78,15 +73,18 @@ static void keyboard_do_show() {
     jobject   imm = env->CallObjectMethod(activity, gss, ims);
     jclass    ic  = env->GetObjectClass(imm);
 
-    // toggleSoftInput(SHOW_FORCED=2, 0) works from overlay .so with no real focused View.
-    // showSoftInput silently fails without focus; toggleSoftInput does not need it.
-    jmethodID tsi = env->GetMethodID(ic, "toggleSoftInput", "(II)V");
-    env->CallVoidMethod(imm, tsi, 2, 0);
+    // CRITICAL: always null-check method IDs before calling — a null mid causes a
+    // fatal JNI abort ("mid == null in call to CallObjectMethodV") that kills the app.
+    // toggleSoftInput was removed on newer Android; use showSoftInput(view, SHOW_FORCED).
+    jmethodID ssi = env->GetMethodID(ic, "showSoftInput", "(Landroid/view/View;I)Z");
+    if (ssi != nullptr) {
+        env->CallBooleanMethod(imm, ssi, dv, 2);  // flag 2 = SHOW_FORCED
+    }
 
     env->DeleteLocalRef(at_class); env->DeleteLocalRef(at);
     env->DeleteLocalRef(activity); env->DeleteLocalRef(ac);
     env->DeleteLocalRef(win);      env->DeleteLocalRef(wc);
-    env->DeleteLocalRef(dv);       env->DeleteLocalRef(vc);
+    env->DeleteLocalRef(dv);
     env->DeleteLocalRef(cc);       env->DeleteLocalRef(ims);
     env->DeleteLocalRef(imm);      env->DeleteLocalRef(ic);
     if (attached) g_jvm->DetachCurrentThread();
