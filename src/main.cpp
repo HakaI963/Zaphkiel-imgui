@@ -130,9 +130,23 @@ static void keyboard_do_hide() {
     jstring   ims = (jstring)env->GetStaticObjectField(cc, imf);
     jmethodID gss = env->GetMethodID(ac, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;");
     jobject   imm = env->CallObjectMethod(activity, gss, ims);
+
+    if (!imm) {
+        env->DeleteLocalRef(at_class); env->DeleteLocalRef(at);
+        env->DeleteLocalRef(activity); env->DeleteLocalRef(ac);
+        env->DeleteLocalRef(win);      env->DeleteLocalRef(wc);
+        env->DeleteLocalRef(dv);       env->DeleteLocalRef(vc);
+        env->DeleteLocalRef(bnd);      env->DeleteLocalRef(cc);
+        env->DeleteLocalRef(ims);
+        if (attached) g_jvm->DetachCurrentThread();
+        return;
+    }
+
     jclass    ic  = env->GetObjectClass(imm);
     jmethodID hsi = env->GetMethodID(ic, "hideSoftInputFromWindow", "(Landroid/os/IBinder;I)Z");
-    env->CallBooleanMethod(imm, hsi, bnd, 0);
+    if (hsi != nullptr) {
+        env->CallBooleanMethod(imm, hsi, bnd, 0);
+    }
 
     env->DeleteLocalRef(at_class); env->DeleteLocalRef(at);
     env->DeleteLocalRef(activity); env->DeleteLocalRef(ac);
